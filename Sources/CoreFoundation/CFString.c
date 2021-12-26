@@ -7880,6 +7880,213 @@ cleanup:
     return success;
 }
 
+/// This is derived from the function above.
+
+/// Given a format string and initial argument position, this function returns an array of CFFormatSpec structs.
+Boolean CFStringCountFormatSpecs(CFStringRef formatString, CFIndex initialArgPosition, CFFormatSpec **formatSpecs, CFIndex *formatSpecsSize) {
+    int32_t numSpecs, sizeSpecs, sizeArgNum, formatIdx, curSpec, argNum;
+    CFIndex formatLen;
+    const uint8_t *cformat = NULL;
+    const UniChar *uformat = NULL;
+    UniChar *formatChars = NULL;
+    UniChar localFormatBuffer[FORMAT_BUFFER_LEN];
+
+    // Not used.
+    CFErrorRef *errorPtr;
+    CFFormatSpec *specs;
+    CFPrintValue localValuesBuffer[VPRINTF_BUFFER_LEN];
+    CFPrintValue *values;
+    CFDictionaryRef localConfigs[VPRINTF_BUFFER_LEN];
+    CFDictionaryRef *configs;
+    CFMutableDictionaryRef formattingConfig = NULL;
+    CFIndex numConfigs;
+    CFAllocatorRef tmpAlloc = NULL;
+
+    intmax_t dummyLocation;        // A place for %n to do its thing in; should be the widest possible int value
+
+    numSpecs = 0;
+    sizeSpecs = 0;
+    sizeArgNum = 0;
+    numConfigs = 0;
+    specs = NULL;
+    values = NULL;
+    configs = NULL;
+
+    Boolean success = true;
+
+    formatLen = CFStringGetLength(formatString);
+
+    /* Avoid overflow of formatIdx in loops below that compare to formatIdx */
+    if (formatLen > INT32_MAX) {
+        success = false;
+        goto cleanup;
+    }
+
+    if (!CF_IS_OBJC(_kCFRuntimeIDCFString, formatString) && !CF_IS_SWIFT(CFStringGetTypeID(), formatString)) {
+        __CFAssertIsString(formatString);
+        if (!__CFStrIsUnicode(formatString)) {
+            cformat = (const uint8_t *)__CFStrContents(formatString);
+            if (cformat) cformat += __CFStrSkipAnyLengthByte(formatString);
+        } else {
+            uformat = (const UniChar *)__CFStrContents(formatString);
+        }
+    }
+    if (!cformat && !uformat) {
+        formatChars = (formatLen > FORMAT_BUFFER_LEN) ? (UniChar *)CFAllocatorAllocate(tmpAlloc = __CFGetDefaultAllocator(), formatLen * sizeof(UniChar), 0) : localFormatBuffer;
+        if (formatChars != localFormatBuffer && __CFOASafe) __CFSetLastAllocationEventName(formatChars, "CFString (temp)");
+        CFStringGetCharacters(formatString, CFRangeMake(0, formatLen), formatChars);
+        uformat = formatChars;
+    }
+
+    /* Compute an upper bound for the number of format specifications */
+    if (cformat) {
+        for (formatIdx = 0; formatIdx < formatLen; formatIdx++) {
+            if ('%' == cformat[formatIdx]) {
+                if (__builtin_sadd_overflow(sizeSpecs, 1, &sizeSpecs)) {
+                    success = false;
+                    goto cleanup;
+                }
+            }
+        }
+    } else {
+        for (formatIdx = 0; formatIdx < formatLen; formatIdx++) {
+            if ('%' == uformat[formatIdx]) {
+                if (__builtin_sadd_overflow(sizeSpecs, 1, &sizeSpecs)) {
+                    success = false;
+                    goto cleanup;
+                }
+            }
+        }
+    }
+
+    /* The code following this point makes multiple integer calcuations based off sizeSpecs, which is an upper-bound of the number of tokens in the string based on the number of '%' characters found. In order to avoid integer overflow at multiple points throughout this function, we will cap sizeSpec to an amount that won't overflow, but is still plenty large enough to support any reasonable format strings */
+#define MAX_SIZE_SPECS (0xfffff) /* Won't overflow a 32-bit integer up to and including a multiplicative factor of 256 */
+    if (sizeSpecs > MAX_SIZE_SPECS) {
+        success = false;
+        goto cleanup;
+    }
+
+    tmpAlloc = __CFGetDefaultAllocator();
+    // This may be slightly slower than the original, but since we are returning these specs,
+    // they need to be heap allocated (dbeard).
+    specs = (CFFormatSpec *)CFAllocatorAllocate(tmpAlloc, (2 * sizeSpecs + 1) * sizeof(CFFormatSpec), 0);
+    if (__CFOASafe) __CFSetLastAllocationEventName(specs, "CFString (temp)");
+    configs = ((sizeSpecs < VPRINTF_BUFFER_LEN) ? localConfigs : (CFDictionaryRef *)CFAllocatorAllocate(tmpAlloc, sizeof(CFStringRef) * sizeSpecs, 0));
+
+    /* Collect format specification information from the format string */
+    for (curSpec = 0, formatIdx = 0; formatIdx < formatLen; curSpec++) {
+        SInt32 newFmtIdx;
+        specs[curSpec].loc = formatIdx;
+        specs[curSpec].len = 0;
+        specs[curSpec].size = 0;
+        specs[curSpec].type = 0;
+        specs[curSpec].flags = 0;
+        specs[curSpec].widthArg = -1;
+        specs[curSpec].precArg = -1;
+        specs[curSpec].mainArgNum = -1;
+        specs[curSpec].precArgNum = -1;
+        specs[curSpec].widthArgNum = -1;
+        specs[curSpec].configDictIndex = -1;
+        if (cformat) {
+            for (newFmtIdx = formatIdx; newFmtIdx < formatLen && '%' != cformat[newFmtIdx]; newFmtIdx++);
+        } else {
+            for (newFmtIdx = formatIdx; newFmtIdx < formatLen && '%' != uformat[newFmtIdx]; newFmtIdx++);
+        }
+        if (newFmtIdx != formatIdx) {    /* Literal chunk */
+            specs[curSpec].type = CFFormatLiteralType;
+            specs[curSpec].len = newFmtIdx - formatIdx;
+        } else {
+            CFStringRef configKey = NULL;
+            newFmtIdx++;    /* Skip % */
+            if (!__CFParseFormatSpec(uformat, cformat, &newFmtIdx, formatLen, &(specs[curSpec]), &configKey, NULL)) {
+                success = false;
+                goto cleanup;
+            }
+            if (CFFormatLiteralType == specs[curSpec].type) {
+                specs[curSpec].loc = formatIdx + 1;
+                specs[curSpec].len = 1;
+            } else {
+                specs[curSpec].len = newFmtIdx - formatIdx;
+            }
+            if (NULL != configKey) CFRelease(configKey);
+        }
+        formatIdx = newFmtIdx;
+
+        //TODO: LiteralType here is just all the other text junk we don't care about.
+        //TODO: Avoid returning these in future.
+//                if (specs[curSpec].type != CFFormatLiteralType)
+//                    fprintf(stderr, "specs[%d] = {\n  size = %d,\n  type = %d,\n  loc = %d,\n  len = %d,\n  mainArgNum = %d,\n  precArgNum = %d,\n  widthArgNum = %d\n}\n", curSpec, specs[curSpec].size, specs[curSpec].type, specs[curSpec].loc, specs[curSpec].len, specs[curSpec].mainArgNum, specs[curSpec].precArgNum, specs[curSpec].widthArgNum);
+
+    }
+    numSpecs = curSpec;
+
+    //TODO: Commented out for now, don't think we need this (and it seems to be messing with positional parsing)
+    // With this uncommented, we see '%5$E' as valid, but '%6$E' as invalid. With this commented out, both are seen as valid
+    // Max of three args per spec, reasoning thus: 1 width, 1 prec, 1 value
+//    sizeArgNum = (3 * sizeSpecs + 1);
+//    values = (sizeArgNum > VPRINTF_BUFFER_LEN) ? (CFPrintValue *)CFAllocatorAllocate(tmpAlloc, sizeArgNum * sizeof(CFPrintValue), 0) : localValuesBuffer;
+//    if (values != localValuesBuffer && __CFOASafe) __CFSetLastAllocationEventName(values, "CFString (temp)");
+//    memset(values, 0, sizeArgNum * sizeof(CFPrintValue));
+//
+//    /* Compute values array */
+//    argNum = initialArgPosition;
+//    CFIndex validatedDictSpecs = 0;
+//    for (curSpec = 0; curSpec < numSpecs; curSpec++) {
+//
+//        SInt32 newMaxArgNum;
+//        if (0 == specs[curSpec].type) continue;
+//        if (CFFormatLiteralType == specs[curSpec].type) continue;
+//        newMaxArgNum = sizeArgNum;
+//        if (newMaxArgNum < specs[curSpec].mainArgNum) {
+//            newMaxArgNum = specs[curSpec].mainArgNum;
+//        }
+//        if (newMaxArgNum < specs[curSpec].precArgNum) {
+//            newMaxArgNum = specs[curSpec].precArgNum;
+//        }
+//        if (newMaxArgNum < specs[curSpec].widthArgNum) {
+//            newMaxArgNum = specs[curSpec].widthArgNum;
+//        }
+//        if (sizeArgNum < newMaxArgNum) {
+//            if (values != localValuesBuffer) CFAllocatorDeallocate(tmpAlloc, values);
+//            if (formatChars && (formatChars != localFormatBuffer)) CFAllocatorDeallocate(tmpAlloc, formatChars);
+//            // More arguments than expected - not an error case though.
+//            return true;
+//        }
+//        /* It is actually incorrect to reorder some specs and not all; we just do some random garbage here */
+//        if (-2 == specs[curSpec].widthArgNum) {
+//            specs[curSpec].widthArgNum = argNum++;
+//        }
+//        if (-2 == specs[curSpec].precArgNum) {
+//            specs[curSpec].precArgNum = argNum++;
+//        }
+//        if (-1 == specs[curSpec].mainArgNum) {
+//            specs[curSpec].mainArgNum = argNum++;
+//        }
+//
+//        values[specs[curSpec].mainArgNum].size = specs[curSpec].size;
+//        values[specs[curSpec].mainArgNum].type = specs[curSpec].type;
+//
+//        if (-1 != specs[curSpec].widthArgNum) {
+//            values[specs[curSpec].widthArgNum].size = 0;
+//            values[specs[curSpec].widthArgNum].type = CFFormatLongType;
+//        }
+//        if (-1 != specs[curSpec].precArgNum) {
+//            values[specs[curSpec].precArgNum].size = 0;
+//            values[specs[curSpec].precArgNum].type = CFFormatLongType;
+//        }
+//    }
+    *formatSpecs = specs;
+    *formatSpecsSize = numSpecs;
+
+cleanup:
+    if (values != localValuesBuffer) CFAllocatorDeallocate(tmpAlloc, values);
+    if (formatChars && (formatChars != localFormatBuffer)) CFAllocatorDeallocate(tmpAlloc, formatChars);
+    if (configs != localConfigs) CFAllocatorDeallocate(tmpAlloc, configs);
+    if (formattingConfig != NULL) CFRelease(formattingConfig);
+    return success;
+}
+
+
 #undef SNPRINTF
 
 
@@ -7922,6 +8129,193 @@ void CFShowStr(CFStringRef str) {
     fprintf(stdout, "Contents %p\n", (void *)__CFStrContents(str));
 }
 
+/// Write the count of non-literal format specs to stdout
+void CFPrintCountOfFormatSpecs(CFStringRef formatString) {
+    CFFormatSpec *formatSpecs = NULL;
+    CFIndex formatSpecsSize = NULL;
+    CFStringCountFormatSpecs(formatString, 0, &formatSpecs, &formatSpecsSize);
+
+    CFIndex countNotIncludingLiteralBits = 0;
+    for (CFIndex i=0; i<formatSpecsSize; i++) {
+        if (formatSpecs[i].type != CFFormatLiteralType && formatSpecs[i].type != CFFormatIncompleteSpecifierType) {
+            countNotIncludingLiteralBits++;
+        }
+    }
+    fprintf(stdout, "%ld\n", (long)countNotIncludingLiteralBits);
+}
+
+// This is basically a description method for string specs
+// Outputting the following as a JSON output:
+//    typedef struct {
+//        int16_t size;
+//        int16_t type;
+//        SInt32 loc;
+//        SInt32 len;
+//        SInt32 widthArg;
+//        SInt32 precArg;
+//        uint32_t flags;
+//        int8_t mainArgNum;
+//        int8_t precArgNum;
+//        int8_t widthArgNum;
+//        int8_t configDictIndex;
+//        int8_t numericFormatStyle;        // Only set for localizable numeric quantities
+//    } CFFormatSpec;
+void CFPrintSingleFormatSpecAsJSON(CFFormatSpec spec) {
+    //TODO: Document this format somewhere.
+
+
+    // Type values
+    char *typeString = "unknown";
+    switch (spec.type) {
+        case CFFormatLiteralType:               typeString = "literal";         break;
+        case CFFormatLongType:                  typeString = "long";            break;
+        case CFFormatDoubleType:                typeString = "double";          break;
+        case CFFormatPointerType:               typeString = "pointer";         break;
+        case CFFormatCFType:                    typeString = "object";          break;
+        case CFFormatUnicharsType:              typeString = "unichars";        break;
+        case CFFormatCharsType:                 typeString = "chars";           break;
+        case CFFormatPascalCharsType:           typeString = "pascalChars";     break;
+        case CFFormatSingleUnicharType:         typeString = "singleUnichar";   break;
+        case CFFormatDummyPointerType:          typeString = "dummyPointer";    break;
+        case CFFormatIncompleteSpecifierType:   typeString = "incomplete";      break;
+    }
+
+    // Size values
+    char *sizeString = "unknown";
+    switch (spec.size) {
+        case CFFormatDefaultSize:   sizeString = "default"; break;
+        case CFFormatSize1:         sizeString = "1";       break;
+        case CFFormatSize2:         sizeString = "2";       break;
+        case CFFormatSize4:         sizeString = "4";       break;
+        case CFFormatSize8:         sizeString = "8";       break;
+        case CFFormatSize16:        sizeString = "16";      break;
+    }
+
+    // Flag values
+    CFMutableStringRef flagString = CFStringCreateMutable(NULL, 0);
+    bool seenOneFlag = false;
+    if (spec.flags & kCFStringFormatZeroFlag) {
+        CFStringAppend(flagString, CFSTR("zero"));
+        seenOneFlag = true;
+    }
+    if (spec.flags & kCFStringFormatMinusFlag) {
+        if (seenOneFlag) CFStringAppend(flagString, CFSTR("|"));
+        CFStringAppend(flagString, CFSTR("minus"));
+        seenOneFlag = true;
+    }
+    if (spec.flags & kCFStringFormatPlusFlag) {
+        if (seenOneFlag) CFStringAppend(flagString, CFSTR("|"));
+        CFStringAppend(flagString, CFSTR("plus"));
+        seenOneFlag = true;
+    }
+    if (spec.flags & kCFStringFormatSpaceFlag) {
+        if (seenOneFlag) CFStringAppend(flagString, CFSTR("|"));
+        CFStringAppend(flagString, CFSTR("space"));
+        seenOneFlag = true;
+    }
+    if (spec.flags & kCFStringFormatExternalSpecFlag) {
+        if (seenOneFlag) CFStringAppend(flagString, CFSTR("|"));
+        CFStringAppend(flagString, CFSTR("external"));
+        seenOneFlag = true;
+    }
+    if (spec.flags & kCFStringFormatLocalizable) {
+        if (seenOneFlag) CFStringAppend(flagString, CFSTR("|"));
+        CFStringAppend(flagString, CFSTR("localizable"));
+        seenOneFlag = true;
+    }
+    if (spec.flags & kCFStringFormatEntityMarkerFlag) {
+        if (seenOneFlag) CFStringAppend(flagString, CFSTR("|"));
+        CFStringAppend(flagString, CFSTR("entityMarker"));
+        seenOneFlag = true;
+    }
+    if (spec.flags & kCFStringFormatPercentReplacementFlag) {
+        if (seenOneFlag) CFStringAppend(flagString, CFSTR("|"));
+        CFStringAppend(flagString, CFSTR("percReplacement"));
+        seenOneFlag = true;
+    }
+    if (CFStringGetLength(flagString) == 0) {
+        CFStringAppend(flagString, CFSTR("none"));
+    }
+
+    // Output JSON
+    printf("{");
+    printf("\"size\":\"%s\",", sizeString);
+    printf("\"type\":\"%s\",", typeString);
+    printf("\"loc\":\"%d\",", spec.loc);
+    printf("\"len\":\"%d\",", spec.len);
+    printf("\"widthArg\":\"%d\",", spec.widthArg);
+    printf("\"precArg\":\"%d\",", spec.precArg);
+    printf("\"mainArgNum\":\"%d\",", spec.mainArgNum);
+    printf("\"precArgNum\":\"%d\",", spec.precArgNum);
+    printf("\"widthArgNum\":\"%d\",", spec.widthArgNum);
+    printf("\"flags\":\"%s\"", CFStringGetCStringPtr(flagString, kCFStringEncodingUTF8));
+    //TODO: Haven't covered all here. Note above line doesn't have trailing comma.
+    printf("}\n");
+}
+
+/// Output any matched format specs as a JSON string
+void CFPrintFormatSpecsAsJSON(CFStringRef formatString) {
+    CFFormatSpec *formatSpecs = NULL;
+    CFIndex formatSpecsSize = NULL;
+    CFStringCountFormatSpecs(formatString, 0, &formatSpecs, &formatSpecsSize);
+
+    CFIndex countNotIncludingLiteralBits = 0;
+    CFFormatSpec firstSpec;
+    CFAllocatorRef tmpAlloc = __CFGetDefaultAllocator();
+    CFFormatSpec *nonLiteralSpecs = NULL;
+
+    // Get first non literal spec
+    for (CFIndex i=0; i<formatSpecsSize; i++) {
+        if (formatSpecs[i].type != CFFormatLiteralType) {
+            firstSpec = formatSpecs[i];
+            break;
+        }
+    }
+
+    // Count non literal specs
+    for (CFIndex i=0; i<formatSpecsSize; i++) {
+        if (formatSpecs[i].type != CFFormatLiteralType) {
+            countNotIncludingLiteralBits++;
+        }
+    }
+
+    // No items
+    if (countNotIncludingLiteralBits == 0) {
+        printf("{}\n");
+    // Single spec
+    } else if (countNotIncludingLiteralBits == 1) {
+        if (formatSpecs[0].type == CFFormatLiteralType || formatSpecs[0].type == CFFormatIncompleteSpecifierType) {
+            printf("{}\n");
+        } else {
+            CFPrintSingleFormatSpecAsJSON(firstSpec);
+        }
+    // Multiple specs
+    } else {
+
+        //NOTE: We currently also remove the incomplete specs. Otherwise stuff like '%1[' shows up as incomplete.
+        nonLiteralSpecs = (CFFormatSpec *)CFAllocatorAllocate(tmpAlloc, countNotIncludingLiteralBits * sizeof(CFFormatSpec), 0);
+        CFIndex outputIdx = 0;
+        for (CFIndex i=0; i<formatSpecsSize; i++) {
+            if (formatSpecs[i].type != CFFormatLiteralType && formatSpecs[i].type != CFFormatIncompleteSpecifierType)  {
+                nonLiteralSpecs[outputIdx] = formatSpecs[i];
+                outputIdx++;
+            }
+        }
+
+        printf("[");
+        for (int i=0; i<countNotIncludingLiteralBits; i++)  {
+            CFPrintSingleFormatSpecAsJSON(nonLiteralSpecs[i]);
+            // Separators
+            if (i < countNotIncludingLiteralBits - 1) {
+                printf(",");
+            }
+        }
+        printf("]\n");
+    }
+
+    // Cleanup
+    if (nonLiteralSpecs != NULL) CFAllocatorDeallocate(tmpAlloc, nonLiteralSpecs);
+}
 
 
 
