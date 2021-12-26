@@ -204,6 +204,9 @@ struct __CFConstStr {
 #define CF_FORMAT_ARGUMENT(A)
 #endif
 
+CF_EXPORT
+void CFDaniel(void);
+
 /*** Immutable string creation functions ***/
 
 /* Functions to create basic immutable strings. The provided allocator is used for all memory activity in these functions.
@@ -906,6 +909,7 @@ void CFShowStr(CFStringRef str);
 /* This function is private and should not be used directly */
 CF_EXPORT
 CFStringRef  __CFStringMakeConstantString(const char *cStr) CF_FORMAT_ARGUMENT(1);	/* Private; do not use */
+
 
 CF_EXTERN_C_END
 CF_IMPLICIT_BRIDGING_DISABLED

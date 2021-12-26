@@ -7919,7 +7919,9 @@ void CFShowStr(CFStringRef str) {
     fprintf(stdout, "Contents %p\n", (void *)__CFStrContents(str));
 }
 
-
+void CFDaniel(void) {
+    printf("CFDaniel\n");
+}
 
 
 
