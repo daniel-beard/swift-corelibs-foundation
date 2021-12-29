@@ -8124,11 +8124,10 @@ void CFShowStr(CFStringRef str) {
     fprintf(stdout, "Contents %p\n", (void *)__CFStrContents(str));
 }
 
-//void CFDaniel(void) {
+/// Write the count of non-literal format specs to stdout
 void CFPrintCountOfFormatSpecs(CFStringRef formatString) {
     CFFormatSpec *formatSpecs = NULL;
     CFIndex formatSpecsSize = NULL;
-//    CFStringCountFormatSpecs(CFSTR("%d %d %d"), 0, &formatSpecs, &formatSpecsSize);
     CFStringCountFormatSpecs(formatString, 0, &formatSpecs, &formatSpecsSize);
 
     CFIndex countNotIncludingLiteralBits = 0;
@@ -8139,6 +8138,72 @@ void CFPrintCountOfFormatSpecs(CFStringRef formatString) {
     }
     fprintf(stdout, "%ld\n", (long)countNotIncludingLiteralBits);
 }
+
+// Outputting the following as a JSON output
+//    typedef struct {
+//        int16_t size;
+//        int16_t type;
+//        SInt32 loc;
+//        SInt32 len;
+//        SInt32 widthArg;
+//        SInt32 precArg;
+//        uint32_t flags;
+//        int8_t mainArgNum;
+//        int8_t precArgNum;
+//        int8_t widthArgNum;
+//        int8_t configDictIndex;
+//        int8_t numericFormatStyle;        // Only set for localizable numeric quantities
+//    } CFFormatSpec;
+void CFPrintSingleFormatSpecAsJSON(CFFormatSpec spec) {
+    //TODO: Expand this to be more useful than just raw values.
+    //TODO: Document this format somewhere.
+    printf("{");
+    printf("\"size\":\"%hd\",", spec.size);
+    printf("\"type\":\"%hd\",", spec.type);
+    printf("\"loc\":\"%d\",", spec.loc);
+    printf("\"len\":\"%d\",", spec.len);
+    printf("\"widthArg\":\"%d\",", spec.widthArg);
+    printf("\"precArg\":\"%d\",", spec.precArg);
+    printf("\"flags\":\"%d\"", spec.flags);
+    //TODO: Haven't covered all here. Note above line doesn't have trailing comma.
+    printf("}\n");
+}
+
+/// Output any matched format specs as a JSON string
+void CFPrintFormatSpecsAsJSON(CFStringRef formatString) {
+    CFFormatSpec *formatSpecs = NULL;
+    CFIndex formatSpecsSize = NULL;
+    CFStringCountFormatSpecs(formatString, 0, &formatSpecs, &formatSpecsSize);
+
+    CFIndex countNotIncludingLiteralBits = 0;
+    CFFormatSpec firstSpec;
+
+    // Get first non literal spec
+    for (CFIndex i=0; i<formatSpecsSize; i++) {
+        if (formatSpecs[i].type != CFFormatLiteralType) {
+            firstSpec = formatSpecs[i];
+            break;
+        }
+    }
+
+    // Count non literal specs
+    for (CFIndex i=0; i<formatSpecsSize; i++) {
+        if (formatSpecs[i].type != CFFormatLiteralType) {
+            countNotIncludingLiteralBits++;
+        }
+    }
+
+    if (countNotIncludingLiteralBits == 0) {
+        printf("{}");
+    } else if (countNotIncludingLiteralBits == 1) {
+        CFPrintSingleFormatSpecAsJSON(firstSpec);
+    } else {
+        //TODO: Implement
+        //TODO: If more than 1, we need to output as an array, like {[{...},{...}]}
+        fprintf(stderr, "Support for multiple specs -> JSON not implemented yet\n");
+    }
+}
+
 
 
 
