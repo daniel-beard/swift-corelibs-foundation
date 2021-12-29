@@ -8139,7 +8139,8 @@ void CFPrintCountOfFormatSpecs(CFStringRef formatString) {
     fprintf(stdout, "%ld\n", (long)countNotIncludingLiteralBits);
 }
 
-// Outputting the following as a JSON output
+// This is basically a description method for string specs
+// Outputting the following as a JSON output:
 //    typedef struct {
 //        int16_t size;
 //        int16_t type;
@@ -8155,16 +8156,91 @@ void CFPrintCountOfFormatSpecs(CFStringRef formatString) {
 //        int8_t numericFormatStyle;        // Only set for localizable numeric quantities
 //    } CFFormatSpec;
 void CFPrintSingleFormatSpecAsJSON(CFFormatSpec spec) {
-    //TODO: Expand this to be more useful than just raw values.
     //TODO: Document this format somewhere.
+
+
+    // Type values
+    char *typeString = "unknown";
+    switch (spec.type) {
+        case CFFormatLiteralType:               typeString = "literal";         break;
+        case CFFormatLongType:                  typeString = "long";            break;
+        case CFFormatDoubleType:                typeString = "double";          break;
+        case CFFormatPointerType:               typeString = "pointer";         break;
+        case CFFormatCFType:                    typeString = "object";          break;
+        case CFFormatUnicharsType:              typeString = "unichars";        break;
+        case CFFormatCharsType:                 typeString = "chars";           break;
+        case CFFormatPascalCharsType:           typeString = "pascalChars";     break;
+        case CFFormatSingleUnicharType:         typeString = "singleUnichar";   break;
+        case CFFormatDummyPointerType:          typeString = "dummyPointer";    break;
+        case CFFormatIncompleteSpecifierType:   typeString = "incomplete";      break;
+    }
+
+    // Size values
+    char *sizeString = "unknown";
+    switch (spec.size) {
+        case CFFormatDefaultSize:   sizeString = "default"; break;
+        case CFFormatSize1:         sizeString = "1";       break;
+        case CFFormatSize2:         sizeString = "2";       break;
+        case CFFormatSize4:         sizeString = "4";       break;
+        case CFFormatSize8:         sizeString = "8";       break;
+        case CFFormatSize16:        sizeString = "16";      break;
+    }
+
+    // Flag values
+    CFMutableStringRef flagString = CFStringCreateMutable(NULL, 0);
+    bool seenOneFlag = false;
+    if (spec.flags & kCFStringFormatZeroFlag) {
+        CFStringAppend(flagString, CFSTR("zero"));
+        seenOneFlag = true;
+    }
+    if (spec.flags & kCFStringFormatMinusFlag) {
+        if (seenOneFlag) CFStringAppend(flagString, CFSTR("|"));
+        CFStringAppend(flagString, CFSTR("minus"));
+        seenOneFlag = true;
+    }
+    if (spec.flags & kCFStringFormatPlusFlag) {
+        if (seenOneFlag) CFStringAppend(flagString, CFSTR("|"));
+        CFStringAppend(flagString, CFSTR("plus"));
+        seenOneFlag = true;
+    }
+    if (spec.flags & kCFStringFormatSpaceFlag) {
+        if (seenOneFlag) CFStringAppend(flagString, CFSTR("|"));
+        CFStringAppend(flagString, CFSTR("space"));
+        seenOneFlag = true;
+    }
+    if (spec.flags & kCFStringFormatExternalSpecFlag) {
+        if (seenOneFlag) CFStringAppend(flagString, CFSTR("|"));
+        CFStringAppend(flagString, CFSTR("external"));
+        seenOneFlag = true;
+    }
+    if (spec.flags & kCFStringFormatLocalizable) {
+        if (seenOneFlag) CFStringAppend(flagString, CFSTR("|"));
+        CFStringAppend(flagString, CFSTR("localizable"));
+        seenOneFlag = true;
+    }
+    if (spec.flags & kCFStringFormatEntityMarkerFlag) {
+        if (seenOneFlag) CFStringAppend(flagString, CFSTR("|"));
+        CFStringAppend(flagString, CFSTR("entityMarker"));
+        seenOneFlag = true;
+    }
+    if (spec.flags & kCFStringFormatPercentReplacementFlag) {
+        if (seenOneFlag) CFStringAppend(flagString, CFSTR("|"));
+        CFStringAppend(flagString, CFSTR("percReplacement"));
+        seenOneFlag = true;
+    }
+    if (CFStringGetLength(flagString) == 0) {
+        CFStringAppend(flagString, CFSTR("none"));
+    }
+
+    // Output JSON
     printf("{");
-    printf("\"size\":\"%hd\",", spec.size);
-    printf("\"type\":\"%hd\",", spec.type);
+    printf("\"size\":\"%s\",", sizeString);
+    printf("\"type\":\"%s\",", typeString);
     printf("\"loc\":\"%d\",", spec.loc);
     printf("\"len\":\"%d\",", spec.len);
     printf("\"widthArg\":\"%d\",", spec.widthArg);
     printf("\"precArg\":\"%d\",", spec.precArg);
-    printf("\"flags\":\"%d\"", spec.flags);
+    printf("\"flags\":\"%s\"", CFStringGetCStringPtr(flagString, kCFStringEncodingUTF8));
     //TODO: Haven't covered all here. Note above line doesn't have trailing comma.
     printf("}\n");
 }
@@ -8177,6 +8253,8 @@ void CFPrintFormatSpecsAsJSON(CFStringRef formatString) {
 
     CFIndex countNotIncludingLiteralBits = 0;
     CFFormatSpec firstSpec;
+    CFAllocatorRef tmpAlloc = __CFGetDefaultAllocator();
+    CFFormatSpec *nonLiteralSpecs = NULL;
 
     // Get first non literal spec
     for (CFIndex i=0; i<formatSpecsSize; i++) {
@@ -8193,15 +8271,37 @@ void CFPrintFormatSpecsAsJSON(CFStringRef formatString) {
         }
     }
 
+    // No items
     if (countNotIncludingLiteralBits == 0) {
         printf("{}");
+    // Single spec
     } else if (countNotIncludingLiteralBits == 1) {
         CFPrintSingleFormatSpecAsJSON(firstSpec);
+    // Multiple specs
     } else {
-        //TODO: Implement
-        //TODO: If more than 1, we need to output as an array, like {[{...},{...}]}
-        fprintf(stderr, "Support for multiple specs -> JSON not implemented yet\n");
+
+        nonLiteralSpecs = (CFFormatSpec *)CFAllocatorAllocate(tmpAlloc, countNotIncludingLiteralBits * sizeof(CFFormatSpec), 0);
+        CFIndex outputIdx = 0;
+        for (CFIndex i=0; i<formatSpecsSize; i++) {
+            if (formatSpecs[i].type != CFFormatLiteralType)  {
+                nonLiteralSpecs[outputIdx] = formatSpecs[i];
+                outputIdx++;
+            }
+        }
+
+        printf("[");
+        for (int i=0; i<countNotIncludingLiteralBits; i++)  {
+            CFPrintSingleFormatSpecAsJSON(nonLiteralSpecs[i]);
+            // Separators
+            if (i < countNotIncludingLiteralBits - 1) {
+                printf(",");
+            }
+        }
+        printf("]\n");
     }
+
+    // Cleanup
+    if (nonLiteralSpecs != NULL) CFAllocatorDeallocate(tmpAlloc, nonLiteralSpecs);
 }
 
 
