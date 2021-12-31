@@ -8132,7 +8132,7 @@ void CFPrintCountOfFormatSpecs(CFStringRef formatString) {
 
     CFIndex countNotIncludingLiteralBits = 0;
     for (CFIndex i=0; i<formatSpecsSize; i++) {
-        if (formatSpecs[i].type != CFFormatLiteralType) {
+        if (formatSpecs[i].type != CFFormatLiteralType && formatSpecs[i].type != CFFormatIncompleteSpecifierType) {
             countNotIncludingLiteralBits++;
         }
     }
@@ -8273,17 +8273,22 @@ void CFPrintFormatSpecsAsJSON(CFStringRef formatString) {
 
     // No items
     if (countNotIncludingLiteralBits == 0) {
-        printf("{}");
+        printf("{}\n");
     // Single spec
     } else if (countNotIncludingLiteralBits == 1) {
-        CFPrintSingleFormatSpecAsJSON(firstSpec);
+        if (formatSpecs[0].type == CFFormatLiteralType || formatSpecs[0].type == CFFormatIncompleteSpecifierType) {
+            printf("{}\n");
+        } else {
+            CFPrintSingleFormatSpecAsJSON(firstSpec);
+        }
     // Multiple specs
     } else {
 
+        //NOTE: We currently also remove the incomplete specs. Otherwise stuff like '%1[' shows up as incomplete.
         nonLiteralSpecs = (CFFormatSpec *)CFAllocatorAllocate(tmpAlloc, countNotIncludingLiteralBits * sizeof(CFFormatSpec), 0);
         CFIndex outputIdx = 0;
         for (CFIndex i=0; i<formatSpecsSize; i++) {
-            if (formatSpecs[i].type != CFFormatLiteralType)  {
+            if (formatSpecs[i].type != CFFormatLiteralType && formatSpecs[i].type != CFFormatIncompleteSpecifierType)  {
                 nonLiteralSpecs[outputIdx] = formatSpecs[i];
                 outputIdx++;
             }
