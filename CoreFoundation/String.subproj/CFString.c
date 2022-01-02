@@ -8017,59 +8017,61 @@ Boolean CFStringCountFormatSpecs(CFStringRef formatString, CFIndex initialArgPos
     }
     numSpecs = curSpec;
 
+    //TODO: Commented out for now, don't think we need this (and it seems to be messing with positional parsing)
+    // With this uncommented, we see '%5$E' as valid, but '%6$E' as invalid. With this commented out, both are seen as valid
     // Max of three args per spec, reasoning thus: 1 width, 1 prec, 1 value
-    sizeArgNum = (3 * sizeSpecs + 1);
-    values = (sizeArgNum > VPRINTF_BUFFER_LEN) ? (CFPrintValue *)CFAllocatorAllocate(tmpAlloc, sizeArgNum * sizeof(CFPrintValue), 0) : localValuesBuffer;
-    if (values != localValuesBuffer && __CFOASafe) __CFSetLastAllocationEventName(values, "CFString (temp)");
-    memset(values, 0, sizeArgNum * sizeof(CFPrintValue));
-
-    /* Compute values array */
-    argNum = initialArgPosition;
-    CFIndex validatedDictSpecs = 0;
-    for (curSpec = 0; curSpec < numSpecs; curSpec++) {
-
-        SInt32 newMaxArgNum;
-        if (0 == specs[curSpec].type) continue;
-        if (CFFormatLiteralType == specs[curSpec].type) continue;
-        newMaxArgNum = sizeArgNum;
-        if (newMaxArgNum < specs[curSpec].mainArgNum) {
-            newMaxArgNum = specs[curSpec].mainArgNum;
-        }
-        if (newMaxArgNum < specs[curSpec].precArgNum) {
-            newMaxArgNum = specs[curSpec].precArgNum;
-        }
-        if (newMaxArgNum < specs[curSpec].widthArgNum) {
-            newMaxArgNum = specs[curSpec].widthArgNum;
-        }
-        if (sizeArgNum < newMaxArgNum) {
-            if (values != localValuesBuffer) CFAllocatorDeallocate(tmpAlloc, values);
-            if (formatChars && (formatChars != localFormatBuffer)) CFAllocatorDeallocate(tmpAlloc, formatChars);
-            // More arguments than expected - not an error case though.
-            return true;
-        }
-        /* It is actually incorrect to reorder some specs and not all; we just do some random garbage here */
-        if (-2 == specs[curSpec].widthArgNum) {
-            specs[curSpec].widthArgNum = argNum++;
-        }
-        if (-2 == specs[curSpec].precArgNum) {
-            specs[curSpec].precArgNum = argNum++;
-        }
-        if (-1 == specs[curSpec].mainArgNum) {
-            specs[curSpec].mainArgNum = argNum++;
-        }
-
-        values[specs[curSpec].mainArgNum].size = specs[curSpec].size;
-        values[specs[curSpec].mainArgNum].type = specs[curSpec].type;
-
-        if (-1 != specs[curSpec].widthArgNum) {
-            values[specs[curSpec].widthArgNum].size = 0;
-            values[specs[curSpec].widthArgNum].type = CFFormatLongType;
-        }
-        if (-1 != specs[curSpec].precArgNum) {
-            values[specs[curSpec].precArgNum].size = 0;
-            values[specs[curSpec].precArgNum].type = CFFormatLongType;
-        }
-    }
+//    sizeArgNum = (3 * sizeSpecs + 1);
+//    values = (sizeArgNum > VPRINTF_BUFFER_LEN) ? (CFPrintValue *)CFAllocatorAllocate(tmpAlloc, sizeArgNum * sizeof(CFPrintValue), 0) : localValuesBuffer;
+//    if (values != localValuesBuffer && __CFOASafe) __CFSetLastAllocationEventName(values, "CFString (temp)");
+//    memset(values, 0, sizeArgNum * sizeof(CFPrintValue));
+//
+//    /* Compute values array */
+//    argNum = initialArgPosition;
+//    CFIndex validatedDictSpecs = 0;
+//    for (curSpec = 0; curSpec < numSpecs; curSpec++) {
+//
+//        SInt32 newMaxArgNum;
+//        if (0 == specs[curSpec].type) continue;
+//        if (CFFormatLiteralType == specs[curSpec].type) continue;
+//        newMaxArgNum = sizeArgNum;
+//        if (newMaxArgNum < specs[curSpec].mainArgNum) {
+//            newMaxArgNum = specs[curSpec].mainArgNum;
+//        }
+//        if (newMaxArgNum < specs[curSpec].precArgNum) {
+//            newMaxArgNum = specs[curSpec].precArgNum;
+//        }
+//        if (newMaxArgNum < specs[curSpec].widthArgNum) {
+//            newMaxArgNum = specs[curSpec].widthArgNum;
+//        }
+//        if (sizeArgNum < newMaxArgNum) {
+//            if (values != localValuesBuffer) CFAllocatorDeallocate(tmpAlloc, values);
+//            if (formatChars && (formatChars != localFormatBuffer)) CFAllocatorDeallocate(tmpAlloc, formatChars);
+//            // More arguments than expected - not an error case though.
+//            return true;
+//        }
+//        /* It is actually incorrect to reorder some specs and not all; we just do some random garbage here */
+//        if (-2 == specs[curSpec].widthArgNum) {
+//            specs[curSpec].widthArgNum = argNum++;
+//        }
+//        if (-2 == specs[curSpec].precArgNum) {
+//            specs[curSpec].precArgNum = argNum++;
+//        }
+//        if (-1 == specs[curSpec].mainArgNum) {
+//            specs[curSpec].mainArgNum = argNum++;
+//        }
+//
+//        values[specs[curSpec].mainArgNum].size = specs[curSpec].size;
+//        values[specs[curSpec].mainArgNum].type = specs[curSpec].type;
+//
+//        if (-1 != specs[curSpec].widthArgNum) {
+//            values[specs[curSpec].widthArgNum].size = 0;
+//            values[specs[curSpec].widthArgNum].type = CFFormatLongType;
+//        }
+//        if (-1 != specs[curSpec].precArgNum) {
+//            values[specs[curSpec].precArgNum].size = 0;
+//            values[specs[curSpec].precArgNum].type = CFFormatLongType;
+//        }
+//    }
     *formatSpecs = specs;
     *formatSpecsSize = numSpecs;
 
