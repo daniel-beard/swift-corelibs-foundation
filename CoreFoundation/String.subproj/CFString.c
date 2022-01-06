@@ -8242,6 +8242,9 @@ void CFPrintSingleFormatSpecAsJSON(CFFormatSpec spec) {
     printf("\"len\":\"%d\",", spec.len);
     printf("\"widthArg\":\"%d\",", spec.widthArg);
     printf("\"precArg\":\"%d\",", spec.precArg);
+    printf("\"mainArgNum\":\"%d\",", spec.mainArgNum);
+    printf("\"precArgNum\":\"%d\",", spec.precArgNum);
+    printf("\"widthArgNum\":\"%d\",", spec.widthArgNum);
     printf("\"flags\":\"%s\"", CFStringGetCStringPtr(flagString, kCFStringEncodingUTF8));
     //TODO: Haven't covered all here. Note above line doesn't have trailing comma.
     printf("}\n");
